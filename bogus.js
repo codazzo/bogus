@@ -1,5 +1,4 @@
 define(['require'], function(require){
-
     'use strict';
 
     function isObject(value){
@@ -12,7 +11,25 @@ define(['require'], function(require){
     }
 
     var stubbed = [],
+        modulesToCache = {},
+        cached = {},
         originals = {};
+
+    var origDefine = window.define;
+    window.define = function(name, deps){
+        origDefine.apply(this, arguments);
+        var moduleName = document.currentScript && document.currentScript.dataset.requiremodule;
+
+        if (modulesToCache[moduleName]) {
+            //FIXME do proper args manipulation
+            cached[moduleName] = {
+                deps: name,
+                factory: deps
+            };
+            delete modulesToCache[moduleName];
+        }
+    };
+    window.define.amd = origDefine.amd;
 
     function preserveDefinition(name){
         if (requirejs.defined(name) && !originals[name]){
@@ -60,14 +77,36 @@ define(['require'], function(require){
 
     function requireWithStubs(name, callback, errback){
         // Cache the current index of the module in the array.
-        var moduleIndex = stubbed.push(name) - 1;
+        var moduleInCache = cached[name];
 
         preserveDefinition(name);
         requirejs.undef(name);
 
+        if (!moduleInCache) {
+            stubbed.push(name);
+            modulesToCache[name] = true;
+        }
+
         // Require all the dependencies to ensure that they're registered.
         require(stubbed, function () {
-            callback(arguments[moduleIndex]); // Return the required module.
+            var module,
+                args;
+
+            if (moduleInCache) {
+                args = moduleInCache.deps.map(function(depName){
+                    return  require(depName);
+                });
+                module = moduleInCache.factory.apply(null, args);
+
+                define(name, moduleInCache.deps, function(){
+                    return module;
+                });
+                stubbed.push(name); //restore it later
+            } else {
+                module  = arguments[arguments.length -1];
+            }
+
+            callback(module); // Return the required module.
         }, errback);
     }
 
